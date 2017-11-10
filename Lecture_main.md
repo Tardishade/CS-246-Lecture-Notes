@@ -749,14 +749,14 @@ Publish-Subscribe model
 
 Example: Publishers in the form of spreadheet cells, and subscribers in the form of graphs.
 
-Refer to [Diag 1]()
+Refer to ![Diag 1](/res/ObserverPattern.png)
 
 The abstract class subject has all the common code to all subjects. The abstract class observer holds only the interface common to all observers. 
 
 ### Sequence of Method Calls
 1. Subject's state is updated
 2. `Subject::notifyObservers()` calls each observer's `notify` method.
-3. Each observer calls `ConcreteSubject::getState to get the data and reacts to it. 
+3. Each observer calls `ConcreteSubject::getState` to get the data and reacts to it. 
 
 Example: Horse races. The Subject publishes the winners, the observers are individual betters. They will declare victory if their horse wins. 
 
@@ -799,15 +799,175 @@ class HorseRace : public Subject {
         }
 };
 
-class Better : public Observer {
+class Bettor : public Observer {
     Horserace * subject;
     String name, myHorse;
     public:
-        Better(...) :... {
+        Bettor(HorseRace *hr, std::string name, std::string horse) :
+        subject{hr}, name{name}, myHorse{horse} {
             subject->attach(this);
         }
         void notify() {
             String winner = subject->getState();
-            cout<<(winner == myHorse? "win" : "lose")<<endl;
+            cout<<(winner == myHorse)? "win" : "lose")<<endl;
         }
 };
+```
+Simplifications and Adaptations are possible in certain circumstances. 
+* If there is only one subject, you can merge subject and concrete subject. Do not do so lightly as this reduces your ability to generalize in the future.
+* If the state is trivial (i.e. being notified is all the information we need), then you can leave out `getState`.
+* If a subject and an observer can be the same thing (e.g. cells), you can have them be one class. 
+
+Suppose you want to enhance an Object, e.g. add funcionality or features at runtime. For example a windowing system, we start with a basic window, add a scroll bar, and a menu. We would like to be able to choose these enhancements at runtime.
+
+## Decorator Pattern
+
+![diag2](/res/DecoratorPattern.png)
+
+The `class` component defines the interface: the operations your objects will provide. The class `concreteComponent` implements the interface. The `concreteDecorator` classes inherits from `Decorator`, which inherits from `Component` itself. Ergo all decorators are components and they have components. 
+
+For example, a window with a scrollbar ia a kind of window, and has a pointer to the underlying plain window. A window with a scrollbar and a menu is a window, and has a ptr to a window with a scrollbar. 
+
+All of these inherit from window, so window methods can be called on them *polymorphically*.
+
+![diag3](/res/DecoratorPatternPizza.png)
+
+```c++
+class Pizza {
+  public:
+    virtual float price() const = 0;
+    virtual string desc() const = 0;
+    virtual ~Pizza();
+};
+
+class CrustAndSauce : public Pizza {
+  public:
+    float price() const override {return 5.99;}
+    string desc() const override {return "Pizza";}
+};
+
+class Decorator : public Pizza {
+  protected: 
+    Pizza *p;
+    public: 
+      Decorator(Pizza *p): p{p}{}
+      virtual ~Decorator() {delete p;}
+};
+
+class StuffedCrust : public Decorator {
+  public:
+    StuffedCrust(Pizza *p): Decorator{p}{}
+    float price() const override {
+      return p->price() + 2.69;
+    }
+    string desc() const override {
+      return p->desc() + "EWith Stuffed Crust";
+    }
+};
+
+class Topping : public Decorator {
+  string theTopping;
+  public:
+    Topping(Pizza *p, string theTopping): 
+      Decorator{p}, theTopping{theTopping}{}
+
+    string desc() const override {
+      return p->desc() + "with" + theTopping;
+    }  
+    float price() const override {
+      return p->price() + 1.001;
+    }
+};
+
+// class DippingSauce has been omitted
+
+//main.cc
+
+Pizza *p1 =  new CrustAndSauce;
+p1 = new Topping(p1, "Cheese");
+p1 = new Topping(p1, "Ham");
+p1 = new StuffedCrust(p1);
+
+cout << p1->desc() <<" "<< p1->price();
+cout << endl; 
+```
+Guiding principle is to program to interfaces, not implementations. 
+
+**Abstract Base Classes** define the interface, work with pointers or references to Abstract Base Classes and call the methods declared in the interface. This way `ConcreteClass` objects can be swapped in and out at will. 
+
+Example: Iterator Pattern
+
+```c++
+class AbstractIterator { // could be templated.
+  public:
+    virtual int operator*()=0;
+    virtual bool operator!=(const AbstractIterator &o)=0;
+    virtual AbstractIterator & operator++()=0;
+    virtual ~AbstractIterator();
+};
+
+class List {
+  struct Node;
+  ...
+  public:
+    class Iterator : public AbstractIterator {
+      ...
+    };
+};
+
+class Set {
+  ...
+  public:
+    class Iterator : public AbstractIterator {
+      ...
+    };
+};
+```
+Now we can write functions that operate on `Iterators` that are derived from `AbstractIterator`. In this way we can use the same functions to iterate over a variety of different data structures, without knowing what the underlying structures are.
+
+```c++
+template <typename Fn> 
+  void forEach(AbstractIterator &start, AbstractIterator &end, Fn f) {
+    while (start != end) {
+      f(* start);
+      ++start;
+    }
+  }
+```
+## Factory Method Pattern
+
+Problem: Write a video game with two types of enemies, bullets and turtles. The system randomly spawns Bullets and Turtles, but bullets should become more frequent in later levels. 
+
+![diag 4](/res/FactoryMethodEnemy.png)
+
+Since we never know what enemy is going to spawn next, we can't call constructors directly. We also don't want to hard code the policy since we want it to be customizable and adaptable. 
+
+So we put a `factoryMethod` in `Level` that creates our enemies for us.
+
+```c++
+class Level {
+  public:
+    virtual Enemy *createEnemy()=0;
+    //factory method
+    ...
+};
+
+class NormalLevel : public Level {
+  public: 
+    Enemy *createEnemy() override {
+      // create more turtles
+    }
+};
+
+class Castle : public Level {
+  public:
+    Enemy *createEnemy() override {
+      // create more bullets
+    }
+};
+
+//main.cc
+
+Level *l = new NormalLevel;
+Enemy *e = l->createEnemy();
+```
