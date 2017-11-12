@@ -411,8 +411,9 @@ class Book {
   public:
     // defines copy/move fns
 };
+```
 
-If `Book` Copy Assignment Operator isn't `virtual`
+If `Book`'s Copy Assignment Operator isn't `virtual`
 
 ```c++ 
 Text& operator=(const Text &o) {
