@@ -608,7 +608,7 @@ for (vector<int>::reverse_iterator it = v.rbegin(); it != v.rend(); ++it) {
 
 `v.pop_back()` removes the last element of `v`
 
-Vectors are generated to be implemented as an array, so from now on, if you use a dynamic array, use vector. There is no more reason to use the array forms of new[] and delete[]
+Vectors are generated to be implemented as an array, so from now on, if you use a dynamic array, use vector. There is no more reason to use the array forms of `new[]` and `delete[]`
 
 Other vector operations are based on iterators such as `erase`, which erases the element pointed to by the iterator
 
@@ -972,3 +972,120 @@ class Castle : public Level {
 Level *l = new NormalLevel;
 Enemy *e = l->createEnemy();
 ```
+
+## Template Method Pattern
+
+We want subclasses to override some behaviour but still have some common behaviour across all our derived classes. 
+
+**Example**: We have red turtles and we have green turtles. We want to draw our turtles. 
+
+```c++
+class Turtle {
+public:
+  void draw() {
+    drawHead();
+    drawShell(); //virtual
+    drawFeet();
+  }
+private:
+  void drawHead() {...}
+  void drawFeet() {...}
+  virtual void drawShell()=0;
+};
+
+class RedTurtle : public Turtle {
+  void drawShell() {// draw a red shell}
+  ...
+};
+
+class GreenTurtle : public Turtle {
+  void drawShell() {// draw a green shell}
+};
+
+```
+
+Subclasses can't change the way a turtle is drawn, but can specialize drawing skills.
+
+A `public virtual` method is really two things.
+- `public`: It is an interface to the client. It indicates the behaviour we're providing to the client, upholds class invariants and pre/post conditions.
+- `virtual`: An interface to a subclass. A *hook* for our derived classes to inherit specialized behaviour. 
+
+It's hard to separate these two ideas from each other if they're wrapped up in one method. 
+* What if we later decide one of our virtual methods has grown too large and decide to split it into two, we now have to change not only out class code but also our client code. 
+* How could we make sure our overriding classes conform to pre/post conditions? What if they change later? Ugly code duplication.
+
+## The Non-Virtual Interface Idiom (NVI)
+
+It says 
+* All `public` methods should be non-virtual
+* All `virtual` methods should be `private`
+* Except obviously the destructor
+
+e.g. Digital Media
+
+```c++
+class DigitalMedia {
+public:
+  virtual void play()=0;
+  virtual ~DigitalMedia();
+};
+```
+**NVI**
+
+```c++
+class DigitalMedia {
+public:
+  void Play() {doPlay();}
+  virtual ~DigitalMedia() {}
+private:
+  virtual void doPlay()=0;
+};
+
+void DigitalMedia::Play() {
+  if (valid_subscription) {
+    doPlay();
+  }
+}
+```
+Now if we need extra control over `Play()` we can do it.
+* We can add before/after code to run around `doPlay()` (also could be specialized).
+* Can add more hooks later through more `virtual` method calls.
+* All of this without changing the public interface.
+
+It is much easier to keep control over our interface and `virtual` methods than to retake it after the fact.
+
+So the NVI idiom extends the template method pattern saying all virtual methods should be wrapped in a non-virtual method. This is a huge benefit with basically no downside - **Do it**
+
+## STL Maps: For Creating Dicts
+
+e.g. For creating an "array" that can be indexed be an arbitrary type, i.e. a string.
+
+```c++
+#include <map>
+using namespace std;
+
+map<string, int> m;
+m["abc"] = 1; // if key doesn't exist, create it and assign the coresponding value
+cout << m["abc"] << endl; //prints 1
+cout << m["ghi"] << endl; //prints 0
+```
+
+If a key doesn't exist, indexing by that key creates it and default initializes it. Plain Old Datatypes have a default initializing for `map` only. 
+
+```c++
+m.erase("abc"); // removes key-value pair
+if (m.count("abc")) { 
+  // produces the count of that key, 0
+}
+
+for (auto &p : m) {
+  cout << p.first << "," << p.second << endl;
+}
+```
+Prints in order based on key values. `P`'s type here is `std::pair<string, int>`.
+
+## Visitor Pattern
+
+For implementing double dispatch. Virtual methods are chosen on the actual runtime type of objects. What if we have a function that only operates on two objects?
+
+
