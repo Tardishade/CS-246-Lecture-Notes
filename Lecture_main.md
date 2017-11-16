@@ -1082,10 +1082,256 @@ for (auto &p : m) {
   cout << p.first << "," << p.second << endl;
 }
 ```
-Prints in order based on key values. `P`'s type here is `std::pair<string, int>`.
+Prints in order based on key values. `p`'s type here is `std::pair<string, int>`.
 
 ## Visitor Pattern
 
 For implementing double dispatch. Virtual methods are chosen on the actual runtime type of objects. What if we have a function that only operates on two objects?
+
+*ADD LECTURE HERE
+
+----
+
+```c++
+class Book { //enemy
+public:
+  ...
+  virtual void accept(BookVisitor &v) {
+    v.visit(*this); // beStruckBy
+  }
+};
+
+class Text : public Book {
+public:
+  ...
+  void accept(BookVisitor &v) override {
+    v.visit(*this);
+  }
+};
+
+class Comic : public Book {
+public:
+  ...
+  void accept(BookVisitor &v) override {
+    v.visit(*this);
+  }
+};
+
+class BookVisitor { //weapon
+public:
+  virtual void visit(Book &b) = 0; // Strike
+  virtual void visit(Text &t) = 0; // Strike
+  virtual void visit(Comic &c) = 0; // Strike
+};
+```
+Track how many books of each type we have. Group books by author for `Book`, hero for `Comic` and topic for `Text`.
+
+We use a `map<string, int>`. We could add a `virtual` method `virtual void updateMap(map<string int> &m)` to our book hierarchy. Or we could write a visitor.
+
+```c++
+class Catalogue : public BookVisitor {
+  map<string, int> theCatalogue;
+public:
+  void visit(Book &b) override {
+    ++theCatalogue[b.getAuthor()];
+  }
+  void visit(Text &t) override {
+    ++theCatalogue[t.getTopic()];
+  }
+  void visit(Comic &c) override {
+    ++theCatalogue[c.getHero()];
+  }
+};
+```
+`book.h` includes `BookVisitor.h` which includes `text.h`, which itself includes `book.h`. A circular dependancy. 
+
+Because of `Book`'s include guard, when `Book` includes `BookVisitor` and therefore `Text`. `Text`'s inclusion of `Book` does not happen. So `Text` can't see that `Book` is a class. 
+
+But are all of these includes really necessary? 
+
+## Compilation Dependancy
+
+When does a compilation dependancy exist. i.e. When does a file really need to include another. 
+
+```c++
+class A {
+  ...
+};
+
+//b.h
+
+class B : public A {
+  ...
+}; // Has a true compilation dependancy
+
+//c.h
+
+class C {
+  A myA;
+  ...
+}; // Has a true compilation dependancy
+
+//d.h
+
+class D {
+  A* myA;
+  ...
+} // Doesn't have a compilation dependancy
+
+//e.h
+
+class E {
+  ...
+  A f(A a);
+} // Doesn't have a true compilation dependancy
+```
+Which of these need to include `a.h` and which only need a forward declaration?
+
+classes `B` and `C` have compilation dependencies because in order for the compiler to know how large `B` and `C` are, it needs to know the size of `A`. 
+
+Classes `D` and `E` do not. The compiler knows the size of a pointer and function prototypes are only used for typeChecking purposes. 
+
+If there is no compilation dependancy, then do not include the file. Just a forward declaration. 
+
+If `A` changes, `B` and `C` also need to be recompiled. But `D` and `E` don't.
+
+Now in the implementation files, a true compilation dependancy is almost certain. 
+
+```c++
+#include "a.h"
+
+void D::f() {
+  myA->someFn();
+}
+```
+
+Do the `#include` statements in your `.cc` files where possible. 
+
+Now consider the `XWindow` class.
+
+```c++
+class XWindow {
+  Display *d; // This is private data
+  Window w; // Do we need to know what all of this means?
+  int s; // Do we even care?
+  GC gc;
+  unsigned long Colours[10];
+  ...
+};
+```
+
+What if we add or change these private fields? Our client code must now be recompiled. How can we make it so that this isn't the case? 
+
+**Solution**: is to use the Pointer to Implementation (pImpl) idiom. Create a second class `XWindowImpl` which stores the implementation details, `XWindow` just has a ptr to it. 
+
+```c++
+//XWindowImpl.h
+#include <X11/XLib.h>
+Struct XWindowImpl {
+  Display *d;
+  Window w;
+  int s;
+  GC gc;
+  unsigned long Colours[10];
+};
+```
+```c++
+//window.h
+class XWindowImpl;
+
+class XWindow {
+  XWindowImpl *pImpl;
+public:
+  //no change
+};
+```
+```c++
+//window.cc
+#include "window.h"
+#include "XWindowImpl.h"
+
+XWindow::XWindow(...) : pImpl{new pImpl{...}} {...}
+```
+In other methods replace fields `w`, `d`, `s` etc with `pImpl->w`, `pImpl->d` etc. 
+
+If you confine all `XWindow` private fields within `XWindowImpl`, then only `window.cc` needs to be recompiled if you change `XWindow`'s implementation. 
+
+Generalization: What if there's multiple types of windows? e.g. `XWindow` and `YWindow`? Then make the `Impl Struct` a superclass. 
+
+![pImple](res/pImple.png)
+
+The pImple with a hierarchical Impl structures is called the *Bridge Pattern*.
+
+## Measures of Design Quality
+
+### Coupling and Cohesion
+
+**Coupling**: The degree to which distinct program modules depend on each other.
+
+**Low**
+* Modules communicate through function calls with basic params/results.
+* Modules pass arrays/structs back and forth
+* Modules affect each other's control flow
+* Modules share global data
+* Modules have access to each other's implementations (friends)
+
+**High**
+
+High Coupling:
+* Changes to one module require greater changes to other modules.
+* Harder to reuse individual modules.
+
+---
+**Cohesion**: How closely related elements of a specific module are.
+
+**Low**
+
+* Arbitrary grouping of unrelated element (e.g. `<utility>`)
+* Elements share a common theme, may be some base code, but otherwise unrelated (e.g. `<algorithms>`)
+* Elements manipulate the state over a lifetime of an object (e.g. `open/read/closed`)
+* Elements pass data to each other
+* Elements cooperate to perform exactly one task
+
+**High**
+
+Low Cohesion:
+* Poorly organized code.
+* Harder to maintain, reuse.
+
+**Goal: Low Coupling, High Cohesion**
+
+## Decouple the interface (MVC) 
+
+Your primary program classes should not be printing/displaying things. 
+
+Example:
+```c++
+class ChessBoard {
+  ...
+  cout << "Your Move" << ...
+};
+```
+This is bad design as it inhibits code reuse. 
+
+What if you want to reuse the `ChessBoard` class, but not have it communicate with `stdout`? 
+
+A better solution, give the class `Stream` objects with which it can do input/output.
+
+```c++
+class ChessBoard {
+  istream &in;
+  ostream &out;
+public:
+  ChessBoard (istream &in, ostream &o) ... 
+  ... out << "Your Move" ...
+};
+```
+This is better, but what if we don't want to use streams at all? e.g. graphics. 
+
+Your `ChessBoard` should not be doing any communication at all.
+
+**Single Responsibility Principle**: A class should have one reason to change. Game state and communication are two reasons.
+
+
 
 
