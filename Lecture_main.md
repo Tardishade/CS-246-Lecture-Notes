@@ -1088,7 +1088,19 @@ Prints in order based on key values. `p`'s type here is `std::pair<string, int>`
 
 For implementing double dispatch. Virtual methods are chosen on the actual runtime type of objects. What if we have a function that only operates on two objects?
 
-*ADD LECTURE HERE
+e.g. we want to be able to hit an enemy with a weapon
+
+![Visitor Pattern Image](/res/visitorpattern.png)
+
+We want something along the lines of `virtual void Strike(weapon &w, Enemy &e);`
+
+If we put the method in `Enemy`, we only get dispatch on `Enemy`'s virtual methods. If we put it in `Weapon`, the same happens but for a weapon.
+
+The trick to double dispatch is to continue overloading and overriding
+
+```c++
+
+
 
 ----
 
