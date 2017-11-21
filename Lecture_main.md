@@ -1099,10 +1099,54 @@ If we put the method in `Enemy`, we only get dispatch on `Enemy`'s virtual metho
 The trick to double dispatch is to continue overloading and overriding
 
 ```c++
+class Enemy {
+public:
+  virtual void beStruckBy(weapon &w) = 0;
+  ...
+};
 
+class Turtle : public Enemy {
+public:
+  void beStruckBy(weapon &w) override {
+    w.strike(*this);
+  }
+};
 
+class Bullet : public Enemy {
+public: 
+  void beStruckBy(weapon &w) override {
+    w.strike(*this);
+  }
+};
 
-----
+class Weapon {
+public:
+  virtual void Strike(Turtle &t) = 0;
+  virtual void Strike(Bullet &t) = 0;
+};
+
+class Stick : public Weapon {
+public:
+  void Strike(Turtle &t) override {
+    // code for hitting a turtle with a stick
+  }
+  void Strike(Bullet &b) override {
+    // code for hitting a bullet with a stick
+  }
+};
+
+Enemy *e = new Turtle;
+Weapon *w = new Rock;
+e->beStruckBy(*w);
+```
+
+1) Virtual dispatch calls `Turtle::beStruckBy`
+2) `Turtle::beStruckBy` calls the `Weapon` virtual method `Strike()` that takes a turtle param (compile time)
+3) Virtual dispatch choses `Stick::Strike()` with a turtle param.
+
+Visitor can be used as a wat to provide an arbitrary hook into your class for specialized behaviour.
+
+e.g. add a visitor to the book hierarchy that allows for adding functionality without recompiling the classes themselves.
 
 ```c++
 class Book { //enemy
@@ -1344,6 +1388,146 @@ Your `ChessBoard` should not be doing any communication at all.
 
 **Single Responsibility Principle**: A class should have one reason to change. Game state and communication are two reasons.
 
+So: Our `ChessBoard` should communicate via params and results and occassionally by raising exceptions. Confine the actual user interaction outside the game class. Then you have total freedom to change how the communication is done. 
 
+*Question*: So should `main` do all the communication to/from the user/ChessBoard?
 
+*Answer*: No, you may want to extend or reuse your communication code, and it's hard to reuse code that's in a main.
 
+An even better *better* solution is to create a new `class` that handles all user interaction; This class should be distinct from our game state class. 
+
+## **Pattern**: Model-View-Controller
+
+Separate the distinct notions of our data (state), the presentation of the data and the control of the data.
+
+* Model: the main data you are manipulating (e.g. `ChessBoard`)
+* View: how the model is displayed
+* Controller: how the model is manipulated
+
+![mvc](/res/mvc.png)
+
+### The Model
+
+* Can have multiple views (e.g. text and graphics)
+* Doesn't need to know a lot about their details.
+* Classic observer pattern (or could communicate through controller)
+
+### The Controller
+
+* Mediate the flow of communication between the view and the model.
+* May encapsulate the idea of turn-taking, or full game rules (trade-off w/model)
+* May communicate with the user for input (or this could be the view)
+
+By decoupling presentation and control, MVC enhances opportunities for code reuse and adaptability/customization.
+
+---
+
+## Exception Safety 
+
+Consider 
+
+```c++
+void f() {
+  MyClass *p = new MyClass;
+  MyClass mc;
+  g();
+  delete p;
+}
+```
+
+No leaks in this code, we have a matching `delete` to our `new`. But what if `g` throws an exception? What is guaranteed? 
+
+During stack-unwinding, all stack-allocated data is cleaned up; dtor's memory is reclaimed. But heap allocated memory is not freed. Therefore if `g` throws `p` is leaked. 
+
+```c++
+void f() {
+  MyClass *p = new MyClass;
+  MyClass mc;
+  try {
+    gc;
+  } catch(...) {
+    delete p;
+    throw;
+  }
+  delete p;
+}
+```
+Tedious and error prone, duplication of code. How else can we guarantee something (here `delete p`) will execute, no matter how the function exits.
+
+All `c++` gives us is that the destructors for stack allocated objects will run. Put this to your advantage and use stack allocated objects as much as possible, and when stack allocation alone won't work ...
+
+## C++ Idiom, RAII - Resource Acquisition is Initialization
+
+Every resource should be wrapped in a stack-allocated object, whose destructor deletes it. Example: files 
+```c++
+{
+  ifstream{"file"}
+}
+```
+Acquiring the resource (file) happens by initializing the object `F`.
+
+The file is guaranteed to be closed when `F` is popped from the stack (`f`'s dtor runs).
+
+ This can be done with dynamic memory class `std::unique_ptr<T>`, which is a class that holds a `T*` which you supply in the ctor. (`#include <memory>`). The dtor will delete the ptr. In between you can use the smart pointer just like you would a raw pointer (e.g. dereference it).
+
+ ```c++
+ void f() {
+   auto p = std::make_unique<MyClass>();
+   // std::unique_ptr<MyClass> p{new MyClass}; also works
+   MyClass mc;
+   g(); // no leaks, even if g throws
+ }
+```
+
+Difficulty with unique pointers...
+```c++
+class c{...};
+auto p = make_unique<c>();
+unique_ptr<c> p2 = p; //ERROR!
+```
+
+What does it mean to copy a unique pointer? Well, it's nonsense - it's supposed to be unique. We don't want to delete the same pointer twice.
+
+Copying is disallowed for `unique_ptr`. They can only be moved.
+
+If you need to be able to copy pointers use `std::shared_ptr`.
+
+```c++
+void f() {
+  auto p1 = std::make_shared<MyClass>();
+  if (...) {
+    auto p2 = p1; // Two pointers to some object.
+    ...
+  } // p2 is popped off the stack, but the object is NOT deleted.
+} // p1 is popped, but the object is freed
+```
+`shared_ptr` maintains a reference count, a count of all `shared_ptr` pointing at the same object. The memory is freed when the number of `shared_ptr` pointing at it reaches 0;
+
+---
+Use `shared_ptr` and `unique_ptr` instead of raw ptrs whenever you can. They will dramatically reduce the chance of memory leaks. 
+
+For other kinds of resources you should similarly follow RAII by creating or using classes to manage e.g. fstream objects for files or XWindow objects for window. 
+ 
+Back to exception safety. There are three levels of exception safety that a function `f` can offer.
+
+1. Basic Guarantee: If an exception occurs, the program will be left in a valid, but unspecified state. Nothing is leaked and any class invariants are maintained. 
+2. Strong Guarantee: If an exception is raised while executing `f`, the state of the program will be as it was had `f` not been called.
+3. No-throw guarantee: `f` will never throw an exception, and it will always accomplish its task. 
+
+```c++
+class A{...};
+class B{...};
+class C {
+  A a;
+  B b;
+public:
+  void f() {
+    a.method1; // may throw (provides strong guarantee)
+    b.method2; // may throw (provides strong guarantee)
+  }
+};
+```
+If `c::f()` exception safe?  
+
+1. If `a.method1` throws, nothing happened, so ok.
+2. If `b.method2` throws, the effects of `a.method1` must be undone
