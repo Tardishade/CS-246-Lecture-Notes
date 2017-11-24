@@ -1508,11 +1508,11 @@ Use `shared_ptr` and `unique_ptr` instead of raw ptrs whenever you can. They wil
 
 For other kinds of resources you should similarly follow RAII by creating or using classes to manage e.g. fstream objects for files or XWindow objects for window. 
  
-Back to exception safety. There are three levels of exception safety that a function `f` can offer.
+Back to exception safety. There are three levels of exception safety that a function `f()` can offer.
 
 1. Basic Guarantee: If an exception occurs, the program will be left in a valid, but unspecified state. Nothing is leaked and any class invariants are maintained. 
-2. Strong Guarantee: If an exception is raised while executing `f`, the state of the program will be as it was had `f` not been called.
-3. No-throw guarantee: `f` will never throw an exception, and it will always accomplish its task. 
+2. Strong Guarantee: If an exception is raised while executing `f()`, the state of the program will be as it was had `f()` not been called.
+3. No-throw guarantee: `f()` will never throw an exception, and it will always accomplish its task. 
 
 ```c++
 class A{...};
@@ -1530,4 +1530,242 @@ public:
 If `c::f()` exception safe?  
 
 1. If `a.method1` throws, nothing happened, so ok.
-2. If `b.method2` throws, the effects of `a.method1` must be undone
+2. If `b.method2` throws, the effects of `a.method1` must be undone to offer the strong guarantee. It is very hard or impossible to offer the strong guarantee is `a.method1` has non local side-effects.
+
+So no, probably not exception-safe. If `A::method1` and `B::Method2` do __NOT__ have non-local side effects via copy-and-swap. 
+
+```c++
+class C {
+  A s;
+  B b;
+public:
+  void f();
+  A atemp = a;
+  B btemp = b;
+
+  atemp.method1();
+  btemp.method2();
+
+  a = atemp;
+  b = btemp; // What if copy assignment can throw?
+}
+```
+Because copy assignment could throw, we don't yet have exception safety. It would be better if we could guarantee that the "swap" part was a no-throw operation. A *non-throwing_swap* is at the heart of writing exception safe code.
+
+**Key Observation**: Swapping pointers can never throw.
+
+Solution : Use pInmpl idiom
+
+```c++
+struct CImpml {
+  A a;
+  B b;
+};
+
+class C {
+  unique_ptr<CImpl> PImpl;
+public:
+  void f() {
+    auto temp = make_unique<CImpl>(*pImpl);
+    temp->a.method1()
+    temp->b.method2();
+    std::swap(pImpl, temp); 
+  }
+};
+```
+On the other hand if `a.method1` or `b.method2` do **NOT** provide the strong guarantee, generally neither can `c::f()`.
+
+## Exception Safety and the STL
+
+Vector
+* Encapsulate a heap-allocated array
+* Follow RAII - when a stack allocated vector array goes out of scope, the internal heap allocated array is freed.
+
+```c++
+void f() {
+  Vector<MyClass> v;
+  ...
+} // v goes out of scope; `MyClass` dtor runs on all items in the array, array itself is freed.
+
+But: 
+
+```c++
+void g() {
+  Vector<MyClass *> v;
+} //v goes out of scope, pointers don't have dtors, only array is free
+```
+
+In this case only objects pointed to by the ptrs in `v` are not freed. The vector `v` has a way of knowing if it is appropriate to delete these pointers. The pointers might not be the owner of the objects they point at. The objects they point at might not be on the heap.
+
+So if these objects need to be freed, you have to do it.
+
+```c++
+void y() {
+  Vector<MyClass*> v;
+  ...
+  for (auto &n : v) {
+    delete n;
+  }
+}
+
+void h() {
+  Vector<shared_ptr<MyClass>> v;
+  ...
+} // v goes out of scope, shared pointer destructor frees MyClass objects if appropriate, array is freed.
+```
+
+In this case we don't have to do any explicit deallocation. 
+
+Consider the method `Vector<T>::emplace_back`
+* Offers the strong guarantee 
+* If the array is full (i.e. `size == cap`)
+  - allocate a new larger array
+  - copy the objects over (copy ctor)
+    * If a copy ctor throws
+      - delete the new array
+      - old array is still intact
+    * Strong guarantee
+  - Delete the old array
+  - But copying is expensive, if we're going to throw the old data away anyways, why not *move* objects to the new array?
+    * Allocate a new larger array
+    * Move the objects over (move ctor)
+    * delete the old array
+
+The problem is if the move ctor throws, then `Vector<T>::emplace_back` can no longer offer the strong guarantee. Because the original array is no longer intact. But `emplace_back` does offer the strong guarantee. 
+
+Therefor `Vector<T>::emplace_back` will use the move ctor if it promises not to throw any exceptions, otherwise it uses the copy ctor, which may be slower.
+
+Therefore your move operations should provide the no-throw guarantee and they should indicate that they do.
+
+```c++
+class MyClass {
+public:
+  MyClass(MyClass &&other) noexcept {...}
+  MyClass &operator=(MyClass &&o) noexcept;
+  ...
+};
+```
+
+If you know a function will never throw or propagate an exception, declare it `noexcept`, this will allow for optimization of your code. At the very least your move operations should be `noexcept`.
+
+## Casting
+
+In C:
+
+```C
+Node n;
+int *ip = (int *) &n;
+// this is a cast, forces the compiler to lie to itself about types and treat a Node* like and int*
+```
+
+Casts should be avoided, and in particular, C-Style casts should be avoided. If you **MUST** cast, use C++ casts.
+
+C++ has four horrible flavors of casts. 
+* `static_cast` is for "sensible casts" with well defined behaviour.
+
+  Examples:
+  - `double` to an `int` 
+  ```c++
+  double d;
+  int i = static_cast<int>(d);
+  ```
+  - Superclass pointer to a subclass
+  ```c++
+  Book *b = new Text{...};
+  Text *t = static_cast<Text*>(b);
+  ```
+  You are taking responsibility for the fact that `b` really does point at a `Text` object.
+
+* `reinterpret_cast` is for unsafe, system/implementation dependant "weird" conversions. Nearly all uses of a `reinterpret_cast` result in undefined behaviour.
+
+  Example:
+  ```c++
+  Student s;
+  Turtle *t = reinterpret_cast<Turtle *>(&s);
+  // Force this student to be treated like a turtle
+  ```
+
+* `const_cast`is for converting between const and non-const. It is the only c++ cast that can "cast away const"
+
+  Example:
+  ```c++
+  void y(int *p);
+  void f(const int *p) {
+    ...
+    g(const_cast<int *>(p);
+    ...
+  }
+  ```
+
+* `dynamic_cast` : Is it safe to convert from a `Book *` to a `Text *`
+  ```c++
+  Book *pb = ...;
+  Text *pt = static_cast<Text *>(pb);
+  ```
+  depends on what `pb` actually points at. Would be better to tentatively try to cast and see if it succeeds. 
+
+  ```c++
+  Book *pb = ...;
+  Text *pt = dynamic_cast<Text *>(pb);
+  ```
+  If the cast works, `pt` points at the same thing as `pb`, if not it is the nullptr.
+
+  ```c++
+  if (pt) cout<<pt->getTopic();
+  else cout<<"Not a Text
+  ```
+  Note: Dynamic casting only works on classes that have at least one virtual function.
+
+  But these casts have been operating on raw pointers, can we cast smart pointers?
+
+  Yes!
+
+  ```c++
+  static_pointer_cast
+  const_pointer_cast
+  dynamic_pointer_cast
+  ```
+  We can use dynamic casting to make decisions based on an object's runtime type information (RTTI).
+
+  ```c++
+  void whatIsIt(shared_ptr<Book>) {
+    if (dynamic_pointer_cast<comic>(b)) {
+      cout<<"comic";
+    } else if (dynamic_pointer_cast<Text>(b)) {
+      cout<<"Text";
+    } else {
+      cout <<"Book"
+    }
+  }
+  ```
+
+  Code like this is highly coupled to the `Book` class hierarchy and may probably indicate bad design.
+
+  Better: use virtual methods or visitor if possible.
+
+  Dynamic casting also works on references. 
+
+  ```c++
+  Text t{...};
+  Book &b = t;
+  ...
+  Text &t2 = dynamic_cast<Text &>(b);
+  ```
+  If `b` is a reference to a text object then `t2` will be assigned to be a reference to that same text. 
+
+  What if `b` doesn't actually refer to a `Text`. No such thing as a null reference, we can't continue.
+
+  In that case `dynamic_cast` will throw a `bad_cast` exception.
+
+  With dynamic reference casting, we can now solve the polymorphic assignment problem.
+
+  ```c++
+  Text &Text::operator=(const Book &b) { // virtual
+    const Text &textOther=dynamic_cast<Text &>(b);
+    // throw if b is not a Text
+    Book::operator=(other);
+    topic = textOther.topic;
+    return *this;
+  }
+  ```
+
